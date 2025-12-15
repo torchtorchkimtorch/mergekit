@@ -1,254 +1,443 @@
 # Merge Method Guide
 
-## 목차
+## Table of Contents
 
-* [개요](#개요)
-* [기본 병합 방법](#기본-병합-방법)
-
-  * [Linear (`linear`)](#linear-linear)
-* [구면 보간 방법](#구면-보간-방법)
-
-  * [SLERP (`slerp`)](#slerp-slerp)
-  * [NuSLERP (`nuslerp`)](#nuslerp-nuslerp)
-  * [Multi-SLERP (`multislerp`)](#multi-slerp-multislerp)
-  * [Karcher Mean (`karcher`)](#karcher-mean-karcher)
-* [Task Vector 기반 방법](#task-vector-기반-방법)
-
-  * [Task Arithmetic (`task_arithmetic`)](#task-arithmetic-task_arithmetic)
-  * [TIES-Merging (`ties`)](#ties-merging-ties)
-  * [DARE (`dare_linear`, `dare_ties`)](#dare-dare_linear-dare_ties)
-  * [DELLA (`della`, `della_linear`)](#della-della-della_linear)
-  * [Model Breadcrumbs (`breadcrumbs`, `breadcrumbs_ties`)](#model-breadcrumbs-breadcrumbs-breadcrumbs_ties)
-  * [SCE (`sce`)](#sce-sce)
-* [특수 목적 방법](#특수-목적-방법)
-
-  * [Model Stock (`model_stock`)](#model-stock-model_stock)
-  * [Nearswap (`nearswap`)](#nearswap-nearswap)
-  * [Arcee Fusion (`arcee_fusion`)](#arcee-fusion-arcee_fusion)
-  * [Passthrough (`passthrough`)](#passthrough-passthrough)
-* [요약](#요약)
-* [기여하기](#기여하기)
+- [Overview](#overview)
+- [Basic Merging Methods](#basic-merging-methods)
+  - [Linear (`linear`)](#linear-linear)
+- [Spherical Interpolation Methods](#spherical-interpolation-methods)
+  - [SLERP (`slerp`)](#slerp-slerp)
+  - [NuSLERP (`nuslerp`)](#nuslerp-nuslerp)
+  - [Multi-SLERP (`multislerp`)](#multi-slerp-multislerp)
+  - [Karcher Mean (`karcher`)](#karcher-mean-karcher)
+- [Task Vector Methods](#task-vector-methods)
+  - [Task Arithmetic (`task_arithmetic`)](#task-arithmetic-task_arithmetic)
+  - [TIES-Merging (`ties`)](#ties-merging-ties)
+  - [DARE (`dare_linear`, `dare_ties`)](#dare-dare_linear-dare_ties)
+  - [DELLA (`della`, `della_linear`)](#della-della-della_linear)
+  - [Model Breadcrumbs (`breadcrumbs`, `breadcrumbs_ties`)](#model-breadcrumbs-breadcrumbs-breadcrumbs_ties)
+  - [SCE (`sce`)](#sce-sce)
+- [Specialized Methods](#specialized-methods)
+  - [Model Stock (`model_stock`)](#model-stock-model_stock)
+  - [Nearswap (`nearswap`)](#nearswap-nearswap)
+  - [Arcee Fusion (`arcee_fusion`)](#arcee-fusion-arcee_fusion)
+  - [Passthrough (`passthrough`)](#passthrough-passthrough)
+- [Summary](#summary)
+- [Contributing](#contributing)
 
 ---
 
-## 개요
+## Overview
 
-이 문서는 `mergekit`에서 제공하는 다양한 **모델 병합 알고리즘**을 체계적으로 설명합니다. 각 병합 방법은 서로 다른 가정, 파라미터, 적용 시나리오를 가지며, 모델 간 관계(동일 베이스인지, 서로 다른 태스크인지 등)에 따라 적합성이 달라집니다.
+이 가이드는 `mergekit`에서 제공하는 다양한 **모델 병합(model merging) 알고리즘**에 대해 상세히 설명합니다.  
+각 방법은 서로 다른 **사용 사례(use case)**, **파라미터**, 그리고 **모델 결합 방식**을 가지며, 목적에 따라 적합한 기법이 달라집니다.
 
 ---
 
-## 기본 병합 방법
+## Basic Merging Methods
 
 ### Linear (`linear`)
 
-**개념:** 입력 모델들의 파라미터를 **가중 평균(weighted average)**으로 단순 결합합니다. 가장 기본적이며 널리 사용되는 병합 방식입니다.
+**개념 (Concept):**  
+입력 모델들의 파라미터를 **가중 평균(weighted average)** 으로 단순히 결합합니다. 가장 기본적이며 널리 사용되는 병합 기법입니다.
 
-**사용 사례:**
+**사용 사례 (Use Cases):**
 
-* 동일한 fine-tuning 실험에서 얻은 여러 체크포인트 평균화 ("model soup")
-* 구조와 학습 데이터가 매우 유사한 모델 결합
-* 단일 모델 내에서 앙상블과 유사한 효과
+- 동일한 fine-tuning run에서 나온 여러 checkpoint를 평균내는 경우 (“model soups”)
+- 아키텍처와 학습 데이터가 매우 유사한 모델들을 결합하는 경우
+- 단일 모델 안에서 간단한 ensemble 효과를 얻고 싶은 경우
 
-**입력:** 2개 이상의 모델. 일반적으로 `base_model`은 사용하지 않습니다.
+**입력 (Inputs):**  
+2개 이상의 모델을 입력으로 받습니다. 일반적으로 `base_model`은 사용하지 않습니다.
 
-**주요 파라미터:**
+**주요 파라미터 (Key Parameters):**
 
-* `weight` (모델별): 각 모델의 기여도
-* `normalize` (전역): `true` (기본값)일 경우 weight 합이 1이 되도록 정규화
+- `weight` (모델별): 각 모델이 평균에 기여하는 비중
+- `normalize` (전역): `true`일 경우(기본값), weight의 합이 1이 되도록 정규화
 
-**참고:** Model Soups 논문
+**참고 문헌 (Reference):**  
+[Model Soups: Averaging Weights of Multiple Fine-Tuned Models Improves Accuracy Without Increasing Inference Time](https://arxiv.org/abs/2203.05482)
 
 ---
 
-## 구면 보간 방법
+## Spherical Interpolation Methods
 
 ### SLERP (`slerp`)
 
-**개념:** 두 모델 사이를 **구면 선형 보간(Spherical Linear Interpolation)** 합니다. 단순 선형 보간과 달리 파라미터 벡터의 노름(norm)을 유지하는 경로를 따라 이동합니다.
+**개념 (Concept):**  
+두 모델 사이의 weight 공간에서 **Spherical Linear Interpolation (SLERP)** 을 수행합니다.  
+이는 hypersphere 상의 경로를 따라 보간을 수행하여, 결과 모델이 원래 모델들과 유사한 **norm(크기)** 을 유지하도록 합니다.
 
-**사용 사례:**
+**사용 사례 (Use Cases):**
 
-* 두 모델 사이의 연속적인 중간 모델 생성
-* 서로 다른 특성을 가진 두 모델 사이 공간 탐색
+- 두 개의 서로 다른 모델 사이에서 부드러운 전이(intermediate model)를 생성
+- 서로 다른 특성을 가진 두 모델 사이의 공간을 탐색
 
-**입력:** 정확히 2개 모델 필요. 하나는 반드시 `base_model`로 지정해야 합니다.
+**입력 (Inputs):**  
+정확히 2개의 모델이 필요하며, 그중 하나는 반드시 `base_model`로 지정되어야 합니다.
 
-**주요 파라미터:**
+**주요 파라미터 (Key Parameters):**
 
-* `t` (전역): 보간 계수 (`t=0` → base, `t=1` → 다른 모델)
+- `t` (전역): 보간 계수  
+  - `t=0` → `base_model`  
+  - `t=1` → 다른 모델
+
+**참고 문헌 (Reference):**  
+[Wikipedia: Slerp](https://en.wikipedia.org/wiki/Slerp)
 
 ---
 
 ### NuSLERP (`nuslerp`)
 
-**개념:** SLERP의 확장판으로, 더 유연한 설정과 효율적인 구현을 제공합니다. `base_model`이 없는 경우에는 두 모델 간 직접 SLERP를 수행하며, `base_model`이 있을 경우에는 **task vector 공간**에서 SLERP를 수행한 뒤 다시 base에 더합니다.
+**개념 (Concept):**  
+SLERP를 확장한 방식으로, 더 유연한 설정과 빠른 실행을 제공합니다.  
+`base_model`이 없는 경우에는 두 모델 간 SLERP를 직접 수행합니다.  
+`base_model`이 주어지면, 각 모델과 base 간의 **task vector**를 계산한 뒤, 이 task vector들에 대해 SLERP를 수행하고 결과를 다시 `base_model`에 더합니다.
 
-**사용 사례:**
+**사용 사례 (Use Cases):**
 
-* SLERP와 동일하지만 가중치 기반 제어가 필요한 경우
-* 공통 조상 모델(`base_model`) 대비 변화량을 보간하고 싶은 경우
+- SLERP와 유사하지만 두 모델 간 가중치를 더 세밀하게 조정하고 싶은 경우
+- 기존 `slerp` 동작을 재현하고 싶은 경우  
+  (base_model 없이, 첫 번째 모델 weight를 `1-t`, 두 번째를 `t`로 설정)
+- 공통 조상(base_model)을 기준으로 **상대적인 변화(task vector)** 를 보간하고 싶은 경우
 
-**입력:** 정확히 2개 모델 (`base_model`은 선택 사항이며 두 모델과 달라야 함)
+**입력 (Inputs):**  
+정확히 2개의 모델이 필요합니다.  
+`base_model`은 선택 사항이며, 두 모델과는 다른 모델이어야 합니다.
 
-**주요 파라미터:**
+**주요 파라미터 (Key Parameters):**
 
-* `weight` (모델별): 두 모델의 상대적 비중 (여기서 `t`가 유도됨)
-* `nuslerp_flatten` (전역): flatten 후 SLERP 여부 (기본 `true`)
-* `nuslerp_row_wise` (전역): row 단위 SLERP 여부
+- `weight` (모델별): 두 모델의 상대적 가중치  
+  - 보간 계수는  
+    `t = model2_weight / (model1_weight + model2_weight)` 로 계산됨
+- `nuslerp_flatten` (전역): `false`일 경우 row/column 단위로 SLERP 수행  
+  (기본값: `true`)
+- `nuslerp_row_wise` (전역):  
+  `nuslerp_flatten=false`일 때 `true`이면 column이 아닌 **row vector** 단위로 SLERP 수행  
+  (기본값: `false`)
 
 ---
 
 ### Multi-SLERP (`multislerp`)
 
-**개념:** 두 개를 넘는 모델에 대해 **구면 barycentric 보간**을 수행합니다. 유클리드 평균 근처의 접공간(tangent space)에서 계산 후 다시 구면으로 사영합니다.
+**개념 (Concept):**  
+2개 초과의 모델에 대해 hypersphere 상에서 **barycentric interpolation**을 수행합니다.  
+가중 Euclidean mean에서 tangent space로 투영한 뒤 보간을 수행하고, 다시 원래 공간으로 되돌립니다.
 
-**사용 사례:**
+**사용 사례 (Use Cases):**
 
-* 여러 모델의 구면 평균 계산
-* 유사한 모델 집합의 중심점 찾기
+- 여러 모델의 spherical average를 구하고 싶은 경우
+- 관련된 여러 모델의 weight 공간에서 중심점(center)을 찾고 싶은 경우
 
-**입력:** 2개 이상 모델. 선택적으로 `base_model` 사용 가능
+**입력 (Inputs):**  
+2개 이상의 모델을 입력으로 받습니다.  
+선택적으로 `base_model`을 지정하여 task vector 공간에서 동작하게 할 수 있습니다.
 
-**주요 파라미터:**
+**주요 파라미터 (Key Parameters):**
 
-* `weight` (모델별)
-* `normalize_weights` (전역, 기본 `true`)
-* `eps` (전역): 수치 안정성 상수
+- `weight` (모델별): 각 모델의 상대적 가중치
+- `normalize_weights` (전역): `true`일 경우(기본값), weight 정규화
+- `eps` (전역): 수치 안정성을 위한 작은 상수 (기본값: `1e-8`)
 
 ---
 
 ### Karcher Mean (`karcher`)
 
-**개념:** 리만 다양체 상의 평균인 **Karcher mean (Fréchet mean)**을 계산합니다. 파라미터 공간의 기하 구조를 더 잘 반영하는 평균 방식입니다.
+**개념 (Concept):**  
+입력 모델 파라미터들의 **Karcher mean**  
+(= Riemannian barycenter, Fréchet mean)을 계산합니다.  
+이는 manifold 상의 점들을 평균내는 기하학적으로 정당한 방법입니다.
 
-**사용 사례:**
+**사용 사례 (Use Cases):**
 
-* 멀리 떨어진 모델들 간의 기하학적으로 안정적인 평균
-* 단순 linear 평균보다 강건한 중심 모델 계산
+- 서로 다른 여러 모델들 사이에서 “중앙” 또는 “평균” 모델을 찾고 싶은 경우
+- weight 공간에서 멀리 떨어진 모델들을 단순 평균보다 더 안정적으로 결합하고 싶은 경우
 
-**입력:** 2개 이상 모델 (`base_model` 사용 안 함)
+**입력 (Inputs):**  
+2개 이상의 모델을 입력으로 받으며, `base_model`은 사용하지 않습니다.
 
-**주요 파라미터:**
+**주요 파라미터 (Key Parameters):**
 
-* `max_iter` (전역)
-* `tol` (전역)
+- `max_iter` (전역): 알고리즘 최대 반복 횟수 (기본값: `10`)
+- `tol` (전역): 수렴 허용 오차 (기본값: `1e-5`)
+
+**참고 문헌 (Reference):**  
+[Wikipedia: Karcher mean](https://en.wikipedia.org/wiki/Karcher_mean)
 
 ---
 
-## Task Vector 기반 방법
+## Task Vector Methods
 
-*아래 방법들은 모두 `base_model` 대비 차이(delta)를 나타내는 **task vector** 개념에 기반합니다.*
+*아래 방법들은 모두 fine-tuned 모델과 `base_model`의 차이를 나타내는  
+**task vector** 개념을 기반으로 합니다.*
 
 ### Task Arithmetic (`task_arithmetic`)
 
-**개념:** 각 모델에서 `base_model`을 뺀 task vector를 계산한 뒤, 이를 가중합하여 다시 base에 더합니다.
+**개념 (Concept):**  
+각 모델에서 `base_model`을 빼서 task vector를 계산합니다.  
+이 task vector들을 가중 평균한 뒤, 다시 `base_model`에 더합니다.
 
-**사용 사례:**
+**사용 사례 (Use Cases):**
 
-* 동일 base에서 fine-tuning된 여러 모델의 능력 결합
-* 특정 능력(코딩, 지시 이해 등)을 다른 모델에 이식
+- 공통 조상(base)에서 파생된 여러 모델의 능력을 결합
+- 특정 능력(코딩, instruction-following 등)을 다른 모델에 이전
+- 스타일이나 행동을 작은 task vector로 조정
 
-**입력:** `base_model` + 1개 이상 모델
+**입력 (Inputs):**  
+`base_model` 1개 + 1개 이상의 추가 모델 필요
 
-**주요 파라미터:**
+**주요 파라미터 (Key Parameters):**
 
-* `weight` (모델별)
-* `lambda` (전역): task vector 스케일
+- `weight` (모델별): 각 task vector의 가중치
+- `lambda` (전역): 합쳐진 task vector에 곱해지는 스케일 계수 (기본값: `1.0`)
+
+**참고 문헌 (Reference):**  
+[Editing Models with Task Arithmetic](https://arxiv.org/abs/2212.04089)
 
 ---
 
 ### TIES-Merging (`ties`)
 
-**개념:** Task Arithmetic에 **희소화(sparsification)**와 **부호 합의(sign consensus)**를 추가하여 모델 간 간섭(interference)을 줄입니다.
+**개념 (Concept):**  
+Task Arithmetic을 확장한 방식으로,  
+task vector를 **sparsify**하고 **sign consensus 알고리즘**을 적용하여  
+모델 간 간섭(interference)을 줄입니다.
 
-**사용 사례:**
+**사용 사례 (Use Cases):**
 
-* 다수 모델 병합 시 성능 저하 방지
+- 많은 수의 모델을 효과적으로 병합
+- 파라미터 간 충돌 및 negative synergy 감소
 
-**주요 파라미터:**
+**입력 (Inputs):**  
+2개 이상의 모델 + 1개의 `base_model`
 
-* `weight`
-* `density`
-* `lambda`
+**주요 파라미터 (Key Parameters):**
+
+- `weight` (모델별)
+- `density` (모델별): 유지할 파라미터 비율
+- `lambda` (전역): Task Arithmetic과 동일
+
+**참고 문헌 (Reference):**  
+[TIES-Merging: Resolving Interference When Merging Models](https://arxiv.org/abs/2306.01708)
 
 ---
 
 ### DARE (`dare_linear`, `dare_ties`)
 
-**개념:** TIES와 유사하지만, **무작위 프루닝 + 재스케일링(rescaling)**을 통해 원 모델 성능을 더 잘 보존하도록 설계되었습니다.
+**개념 (Concept):**  
+TIES와 유사하지만, 무작위 pruning과 **rescaling**을 사용하여  
+원본 모델 성능을 더 잘 보존하도록 설계된 방법입니다.
 
-**변형:**
+**변형 (Variants):**
 
-* `dare_linear`: sign consensus 없음
-* `dare_ties`: sign consensus 포함
+- `dare_linear`: TIES sign consensus 없이 DARE pruning
+- `dare_ties`: TIES sign consensus 포함
+
+**사용 사례 (Use Cases):**
+
+- 여러 fine-tuned 모델을 안정적으로 결합
+- 일부 시나리오에서 TIES보다 더 좋은 성능
+
+**입력 (Inputs):**  
+2개 이상의 모델 + 1개의 `base_model`
+
+**주요 파라미터 (Key Parameters):**
+
+- `weight` (모델별)
+- `density` (모델별)
+- `lambda` (전역)
+- `rescale` (전역, `dare_linear`): 기본값 `true`
+
+**참고 문헌 (Reference):**  
+[Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch](https://arxiv.org/abs/2311.03099)
 
 ---
 
 ### DELLA (`della`, `della_linear`)
 
-**개념:** DARE를 확장하여, 각 row 내에서 파라미터 **절댓값 크기 기반 적응적 프루닝**을 수행합니다. 중요한 변화일수록 유지 확률이 높아집니다.
+**개념 (Concept):**  
+DARE를 확장하여, task vector의 각 row 내에서 **파라미터 크기(magnitude)** 에 기반한  
+adaptive pruning을 수행합니다.  
+큰 magnitude를 가진 파라미터일수록 유지 확률이 높고,  
+작은 magnitude일수록 낮습니다. 이후 DARE와 유사한 rescaling을 적용합니다.
+
+**변형 (Variants):**
+
+- `della`: TIES sign consensus 포함
+- `della_linear`: TIES 없이 DELLA pruning
+
+**사용 사례 (Use Cases):**
+
+- 중요한 변화(large magnitude)를 우선적으로 보존하고 싶은 경우
+- 더 세밀한 pruning 제어가 필요한 병합
+
+**입력 (Inputs):**  
+2개 이상의 모델 + 1개의 `base_model`
+
+**주요 파라미터 (Key Parameters):**
+
+- `weight` (모델별)
+- `density` (모델별)
+- `epsilon` (모델별): keep probability 범위 조절  
+  (`density - epsilon` ~ `density + epsilon`)
+- `lambda` (전역)
+
+**참고 문헌 (Reference):**  
+[DELLA-Merging: Reducing Interference in Model Merging through Magnitude-Based Sampling](https://arxiv.org/abs/2406.11617)
 
 ---
 
 ### Model Breadcrumbs (`breadcrumbs`, `breadcrumbs_ties`)
 
-**개념:** task vector에서 **가장 큰 변화와 가장 작은 변화 모두를 제거**하고, 중간 영역의 변화만 남기는 방식입니다.
+**개념 (Concept):**  
+task vector에서 **가장 작은 값과 가장 큰 값(이상치)** 을 모두 제거하여  
+중간 영역(mid-range)의 변화만을 남기는 방식입니다.
 
-* 큰 변화: 과도하거나 충돌 가능성
-* 작은 변화: 노이즈 가능성
+1. 가장 큰 magnitude 상위 `gamma` 비율 제거
+2. 목표 `density`를 만족하도록 가장 작은 magnitude 제거
+
+**변형 (Variants):**
+
+- `breadcrumbs`: TIES 없이
+- `breadcrumbs_ties`: TIES 포함
+
+**입력 (Inputs):**  
+2개 이상의 모델 + 1개의 `base_model`
+
+**주요 파라미터 (Key Parameters):**
+
+- `weight` (모델별)
+- `gamma` (모델별): 가장 큰 magnitude 제거 비율
+- `density` (모델별): 최종 유지 비율
+- `lambda` (전역)
+
+**참고 문헌 (Reference):**  
+[Model Breadcrumbs: Scaling Multi-Task Model Merging with Sparse Masks](https://arxiv.org/abs/2312.06795)
 
 ---
 
 ### SCE (`sce`)
 
-**개념:** Select–Calculate–Erase의 3단계로 이루어진 **행렬 수준 병합** 방식입니다.
+**개념 (Concept):**  
+SCE(Select, Calculate, Erase)는 **matrix-level 적응형 병합** 방법입니다.
 
-1. 분산 기반 선택
-2. 중요도 기반 가중치 계산
-3. sign consensus 적용
+1. **Select:** variance 기반 마스킹
+2. **Calculate:** matrix 단위 가중치 계산
+3. **Erase:** TIES sign consensus 적용
+
+이후 정규화된 task vector를 `base_model`에 더합니다.
+
+**입력 (Inputs):**  
+2개 이상의 모델 + 1개의 `base_model`
+
+**주요 파라미터 (Key Parameters):**
+
+- `select_topk` (전역): variance 기준으로 유지할 파라미터 비율 (기본값: `1.0`)
+
+**참고 문헌 (Reference):**  
+[FuseChat: Knowledge Fusion of Chat Models](https://arxiv.org/abs/2408.07990)
 
 ---
 
-## 특수 목적 방법
+## Specialized Methods
 
 ### Model Stock (`model_stock`)
 
-**개념:** base 대비 다른 모델들의 task vector 간 **코사인 유사도**를 이용해 자동으로 interpolation 계수 `t`를 계산합니다.
+**개념 (Concept):**  
+`base_model` 대비 다른 모델들의 task vector cosine similarity를 이용해  
+최적의 interpolation weight를 계산한 뒤 선형 보간을 수행합니다.
+
+**입력 (Inputs):**  
+최소 3개 모델 필요 (`base_model` + 2개 이상)
+
+**주요 파라미터 (Key Parameters):**
+
+- `filter_wise` (전역): row 단위 계산 여부 (기본값 `false`)
+
+**참고 문헌 (Reference):**  
+[Model Stock: All we need is just a few fine-tuned models](https://arxiv.org/abs/2403.19522)
 
 ---
 
 ### Nearswap (`nearswap`)
 
-**개념:** base와 secondary 모델이 **이미 유사한 파라미터**에 대해서만 강하게 보간합니다.
+**개념 (Concept):**  
+두 모델의 파라미터 차이가 **작은 부분만 강하게 보간**하는 방식입니다.
+
+**입력 (Inputs):**  
+정확히 2개 모델 (`base_model` 필수)
+
+**주요 파라미터 (Key Parameters):**
+
+- `t` (전역): 보간 강도
+
+**알고리즘 (Algorithm):**
+
+weight = (t / |base - secondary|).clamp(0, 1)
+output = weight * secondary + (1 - weight) * base
+
+
+**참고 문헌 (Reference):**  
+[QuartetAnemoi-70B-t0.0001 on Hugging Face](https://huggingface.co/alchemonaut/QuartetAnemoi-70B-t0.0001)
 
 ---
 
 ### Arcee Fusion (`arcee_fusion`)
 
-**개념:** KL divergence 및 파라미터 차이를 기반으로 중요한 변화만 선택적으로 융합합니다.
+**개념 (Concept):**  
+파라미터 차이와 KL divergence 기반 중요도를 계산하여  
+동적으로 fusion mask를 생성하는 병합 방식입니다.
+
+**입력 (Inputs):**  
+정확히 2개 모델 (`base_model` 필수)
+
+**참고 문헌 (Reference):**  
+[MergeKit v0.1 Release Blog](https://www.arcee.ai/blog/meet-mergekit-v0-1-arcee-fusion-expanded-model-support-multi-gpu-acceleration)
 
 ---
 
 ### Passthrough (`passthrough`)
 
-**개념:** 병합을 수행하지 않고 입력 텐서를 그대로 통과시킵니다. layer slicing용 빌딩 블록입니다.
+**개념 (Concept):**  
+아무런 변경 없이 입력 모델의 텐서를 그대로 통과시키는 no-op 방식입니다.
+
+**사용 사례 (Use Cases):**
+
+- 특정 layer만 선택적으로 조합하는 Frankenmerge
+- 복잡한 `slices` 설정의 빌딩 블록
+
+**입력 (Inputs):**  
+정확히 1개 모델
+
+**주요 파라미터 (Key Parameters):**
+
+- `scale` (선택, 모델별): 텐서 스케일 조정
 
 ---
 
-## 요약
+## Summary
 
-병합 방법은 **모델 수**, **공통 base 존재 여부**, **간섭 제어 필요성**에 따라 선택해야 합니다.
+Merge method는 각각 서로 다른 목적과 설계 철학을 가집니다.  
+모델 수, 관계, 원하는 최종 특성에 따라 적절한 방법이 달라집니다.
 
-* 입문자: `linear`, `nuslerp`, `task_arithmetic`
-* 고급 사용자: `ties`, `dare_ties`, `della`
+초보자라면 `linear`, `nuslerp`, `task_arithmetic`부터 시작하는 것이 좋으며,  
+보다 고급 시나리오에서는 `ties`, `dare_ties`, `della` 같은 방법이  
+모델 간 간섭을 줄이면서 장점을 유지하는 데 효과적입니다.
 
-정답은 하나가 아니며, 병합은 실험과 경험의 영역입니다.
+“최고의” merge 방법은 존재하지 않으며,  
+대부분의 경우 **실험과 튜닝이 핵심**입니다.  
+다양한 설정을 적극적으로 시도해 보시길 권장합니다. Happy merging!
 
 ---
 
-## 기여하기
+## Contributing
 
-새로운 병합 방법이나 개선 아이디어가 있다면 언제든지 환영합니다. `CONTRIBUTING.md`와 `Creating a Merge Method` 문서를 참고하세요.
+새로운 merge 방법 아이디어나 기존 방법 개선 제안은 언제든 환영합니다.  
+자세한 내용은 다음 문서를 참고하세요:
+
+- [Contributing Guide](../CONTRIBUTING.md)
+- [Creating a Merge Method](create_a_merge_method.md)
+
 
 
 # Merge Method Guide

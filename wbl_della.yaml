@@ -11,9 +11,10 @@ models:
     parameters:
       density: 0.2
       weight: 1
-merge_method: ties
+merge_method: della
 base_model: TheBloke/Llama-2-13B-fp16
 parameters:
   normalize: true
   int8_mask: true
+  epsilon: 0.15  # DELLA epsilon parameter (default: 0.15)
 dtype: bfloat16

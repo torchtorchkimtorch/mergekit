@@ -11,9 +11,10 @@ models:
     parameters:
       density: 0.2
       weight: 1
-merge_method: ties
+merge_method: dare_ties
 base_model: TheBloke/Llama-2-13B-fp16
 parameters:
   normalize: true
   int8_mask: true
+  rescale: true  # DARE rescale parameter (default: true)
 dtype: bfloat16

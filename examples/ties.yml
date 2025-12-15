@@ -1,12 +1,12 @@
 models:
   - model: psmathur/orca_mini_v3_13b
     parameters:
-      density: [1, 0.7, 0.1] # density gradient
+      density: [1, 0.7, 0.1] 
       weight: 1.0
   - model: garage-bAInd/Platypus2-13B
     parameters:
       density: 0.5
-      weight: [0, 0.3, 0.7, 1] # weight gradient
+      weight: [0, 0.3, 0.7, 1] 
   - model: WizardLM/WizardMath-13B-V1.0
     parameters:
       density: 0.33

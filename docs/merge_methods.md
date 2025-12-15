@@ -1,5 +1,258 @@
 # Merge Method Guide
 
+## 목차
+
+* [개요](#개요)
+* [기본 병합 방법](#기본-병합-방법)
+
+  * [Linear (`linear`)](#linear-linear)
+* [구면 보간 방법](#구면-보간-방법)
+
+  * [SLERP (`slerp`)](#slerp-slerp)
+  * [NuSLERP (`nuslerp`)](#nuslerp-nuslerp)
+  * [Multi-SLERP (`multislerp`)](#multi-slerp-multislerp)
+  * [Karcher Mean (`karcher`)](#karcher-mean-karcher)
+* [Task Vector 기반 방법](#task-vector-기반-방법)
+
+  * [Task Arithmetic (`task_arithmetic`)](#task-arithmetic-task_arithmetic)
+  * [TIES-Merging (`ties`)](#ties-merging-ties)
+  * [DARE (`dare_linear`, `dare_ties`)](#dare-dare_linear-dare_ties)
+  * [DELLA (`della`, `della_linear`)](#della-della-della_linear)
+  * [Model Breadcrumbs (`breadcrumbs`, `breadcrumbs_ties`)](#model-breadcrumbs-breadcrumbs-breadcrumbs_ties)
+  * [SCE (`sce`)](#sce-sce)
+* [특수 목적 방법](#특수-목적-방법)
+
+  * [Model Stock (`model_stock`)](#model-stock-model_stock)
+  * [Nearswap (`nearswap`)](#nearswap-nearswap)
+  * [Arcee Fusion (`arcee_fusion`)](#arcee-fusion-arcee_fusion)
+  * [Passthrough (`passthrough`)](#passthrough-passthrough)
+* [요약](#요약)
+* [기여하기](#기여하기)
+
+---
+
+## 개요
+
+이 문서는 `mergekit`에서 제공하는 다양한 **모델 병합 알고리즘**을 체계적으로 설명합니다. 각 병합 방법은 서로 다른 가정, 파라미터, 적용 시나리오를 가지며, 모델 간 관계(동일 베이스인지, 서로 다른 태스크인지 등)에 따라 적합성이 달라집니다.
+
+---
+
+## 기본 병합 방법
+
+### Linear (`linear`)
+
+**개념:** 입력 모델들의 파라미터를 **가중 평균(weighted average)**으로 단순 결합합니다. 가장 기본적이며 널리 사용되는 병합 방식입니다.
+
+**사용 사례:**
+
+* 동일한 fine-tuning 실험에서 얻은 여러 체크포인트 평균화 ("model soup")
+* 구조와 학습 데이터가 매우 유사한 모델 결합
+* 단일 모델 내에서 앙상블과 유사한 효과
+
+**입력:** 2개 이상의 모델. 일반적으로 `base_model`은 사용하지 않습니다.
+
+**주요 파라미터:**
+
+* `weight` (모델별): 각 모델의 기여도
+* `normalize` (전역): `true` (기본값)일 경우 weight 합이 1이 되도록 정규화
+
+**참고:** Model Soups 논문
+
+---
+
+## 구면 보간 방법
+
+### SLERP (`slerp`)
+
+**개념:** 두 모델 사이를 **구면 선형 보간(Spherical Linear Interpolation)** 합니다. 단순 선형 보간과 달리 파라미터 벡터의 노름(norm)을 유지하는 경로를 따라 이동합니다.
+
+**사용 사례:**
+
+* 두 모델 사이의 연속적인 중간 모델 생성
+* 서로 다른 특성을 가진 두 모델 사이 공간 탐색
+
+**입력:** 정확히 2개 모델 필요. 하나는 반드시 `base_model`로 지정해야 합니다.
+
+**주요 파라미터:**
+
+* `t` (전역): 보간 계수 (`t=0` → base, `t=1` → 다른 모델)
+
+---
+
+### NuSLERP (`nuslerp`)
+
+**개념:** SLERP의 확장판으로, 더 유연한 설정과 효율적인 구현을 제공합니다. `base_model`이 없는 경우에는 두 모델 간 직접 SLERP를 수행하며, `base_model`이 있을 경우에는 **task vector 공간**에서 SLERP를 수행한 뒤 다시 base에 더합니다.
+
+**사용 사례:**
+
+* SLERP와 동일하지만 가중치 기반 제어가 필요한 경우
+* 공통 조상 모델(`base_model`) 대비 변화량을 보간하고 싶은 경우
+
+**입력:** 정확히 2개 모델 (`base_model`은 선택 사항이며 두 모델과 달라야 함)
+
+**주요 파라미터:**
+
+* `weight` (모델별): 두 모델의 상대적 비중 (여기서 `t`가 유도됨)
+* `nuslerp_flatten` (전역): flatten 후 SLERP 여부 (기본 `true`)
+* `nuslerp_row_wise` (전역): row 단위 SLERP 여부
+
+---
+
+### Multi-SLERP (`multislerp`)
+
+**개념:** 두 개를 넘는 모델에 대해 **구면 barycentric 보간**을 수행합니다. 유클리드 평균 근처의 접공간(tangent space)에서 계산 후 다시 구면으로 사영합니다.
+
+**사용 사례:**
+
+* 여러 모델의 구면 평균 계산
+* 유사한 모델 집합의 중심점 찾기
+
+**입력:** 2개 이상 모델. 선택적으로 `base_model` 사용 가능
+
+**주요 파라미터:**
+
+* `weight` (모델별)
+* `normalize_weights` (전역, 기본 `true`)
+* `eps` (전역): 수치 안정성 상수
+
+---
+
+### Karcher Mean (`karcher`)
+
+**개념:** 리만 다양체 상의 평균인 **Karcher mean (Fréchet mean)**을 계산합니다. 파라미터 공간의 기하 구조를 더 잘 반영하는 평균 방식입니다.
+
+**사용 사례:**
+
+* 멀리 떨어진 모델들 간의 기하학적으로 안정적인 평균
+* 단순 linear 평균보다 강건한 중심 모델 계산
+
+**입력:** 2개 이상 모델 (`base_model` 사용 안 함)
+
+**주요 파라미터:**
+
+* `max_iter` (전역)
+* `tol` (전역)
+
+---
+
+## Task Vector 기반 방법
+
+*아래 방법들은 모두 `base_model` 대비 차이(delta)를 나타내는 **task vector** 개념에 기반합니다.*
+
+### Task Arithmetic (`task_arithmetic`)
+
+**개념:** 각 모델에서 `base_model`을 뺀 task vector를 계산한 뒤, 이를 가중합하여 다시 base에 더합니다.
+
+**사용 사례:**
+
+* 동일 base에서 fine-tuning된 여러 모델의 능력 결합
+* 특정 능력(코딩, 지시 이해 등)을 다른 모델에 이식
+
+**입력:** `base_model` + 1개 이상 모델
+
+**주요 파라미터:**
+
+* `weight` (모델별)
+* `lambda` (전역): task vector 스케일
+
+---
+
+### TIES-Merging (`ties`)
+
+**개념:** Task Arithmetic에 **희소화(sparsification)**와 **부호 합의(sign consensus)**를 추가하여 모델 간 간섭(interference)을 줄입니다.
+
+**사용 사례:**
+
+* 다수 모델 병합 시 성능 저하 방지
+
+**주요 파라미터:**
+
+* `weight`
+* `density`
+* `lambda`
+
+---
+
+### DARE (`dare_linear`, `dare_ties`)
+
+**개념:** TIES와 유사하지만, **무작위 프루닝 + 재스케일링(rescaling)**을 통해 원 모델 성능을 더 잘 보존하도록 설계되었습니다.
+
+**변형:**
+
+* `dare_linear`: sign consensus 없음
+* `dare_ties`: sign consensus 포함
+
+---
+
+### DELLA (`della`, `della_linear`)
+
+**개념:** DARE를 확장하여, 각 row 내에서 파라미터 **절댓값 크기 기반 적응적 프루닝**을 수행합니다. 중요한 변화일수록 유지 확률이 높아집니다.
+
+---
+
+### Model Breadcrumbs (`breadcrumbs`, `breadcrumbs_ties`)
+
+**개념:** task vector에서 **가장 큰 변화와 가장 작은 변화 모두를 제거**하고, 중간 영역의 변화만 남기는 방식입니다.
+
+* 큰 변화: 과도하거나 충돌 가능성
+* 작은 변화: 노이즈 가능성
+
+---
+
+### SCE (`sce`)
+
+**개념:** Select–Calculate–Erase의 3단계로 이루어진 **행렬 수준 병합** 방식입니다.
+
+1. 분산 기반 선택
+2. 중요도 기반 가중치 계산
+3. sign consensus 적용
+
+---
+
+## 특수 목적 방법
+
+### Model Stock (`model_stock`)
+
+**개념:** base 대비 다른 모델들의 task vector 간 **코사인 유사도**를 이용해 자동으로 interpolation 계수 `t`를 계산합니다.
+
+---
+
+### Nearswap (`nearswap`)
+
+**개념:** base와 secondary 모델이 **이미 유사한 파라미터**에 대해서만 강하게 보간합니다.
+
+---
+
+### Arcee Fusion (`arcee_fusion`)
+
+**개념:** KL divergence 및 파라미터 차이를 기반으로 중요한 변화만 선택적으로 융합합니다.
+
+---
+
+### Passthrough (`passthrough`)
+
+**개념:** 병합을 수행하지 않고 입력 텐서를 그대로 통과시킵니다. layer slicing용 빌딩 블록입니다.
+
+---
+
+## 요약
+
+병합 방법은 **모델 수**, **공통 base 존재 여부**, **간섭 제어 필요성**에 따라 선택해야 합니다.
+
+* 입문자: `linear`, `nuslerp`, `task_arithmetic`
+* 고급 사용자: `ties`, `dare_ties`, `della`
+
+정답은 하나가 아니며, 병합은 실험과 경험의 영역입니다.
+
+---
+
+## 기여하기
+
+새로운 병합 방법이나 개선 아이디어가 있다면 언제든지 환영합니다. `CONTRIBUTING.md`와 `Creating a Merge Method` 문서를 참고하세요.
+
+
+# Merge Method Guide
+
 ## Table of Contents
 
 - [Overview](#overview)

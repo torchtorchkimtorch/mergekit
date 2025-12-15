@@ -1,5 +1,325 @@
 # mergekit-evolve
 
+`mergekit-evolve`는 진화 알고리즘(CMA-ES)을 사용하여 **모델 병합(merge)의 파라미터를 자동으로 최적화**하는 스크립트입니다. 이 도구는 SakanaAI의 논문 *[Evolutionary Optimization of Model Merging Recipes](https://arxiv.org/abs/2403.13187)*, 특히 **parameter-space 접근법**에서 영감을 받았습니다.
+
+`mergekit-evolve`는 EleutherAI의 [Language Model Evaluation Harness](https://github.com/EleutherAI/lm-evaluation-harness)를 사용하여 **평가 지표(scoring function)**를 정의하고 계산합니다. 단일 노드 환경뿐만 아니라 **Ray 클러스터**에서도 실행할 수 있으며, 사용자의 컴퓨팅 환경에 따라 서로 다른 스케줄링 전략을 제공합니다.
+
+---
+
+## Installation
+
+`mergekit`을 `evolve` 기능(필요 시 `vllm` 포함)과 함께 설치합니다:
+
+```sh
+git clone https://github.com/arcee-ai/mergekit.git
+cd mergekit
+
+pip install -e .[evolve,vllm]
+```
+
+만약 기존 PyTorch 환경이 잘 동작하고 있었는데, vLLM의 구버전 설치로 인해 **flash-attention**이 깨졌다면 아래 명령으로 복구할 수 있습니다:
+
+```sh
+pip uninstall flash-attn
+pip cache purge
+pip install flash-attn
+```
+
+---
+
+## Configuration
+
+`mergekit-evolve`는 **YAML 설정 파일**을 입력으로 받아, 병합 파라미터 공간과 최적화할 평가 지표를 정의합니다. 기본 구조는 다음과 같습니다:
+
+```yml
+genome:
+    models:
+       - model_1
+       - model_2
+       ...
+       - model_n
+    merge_method: dare_ties
+    base_model: base_model_if_needed
+    tokenizer_source: null # optional
+    layer_granularity: 8
+
+    # optional:
+    normalize: false
+    allow_negative_weights: false
+    smooth: false
+    filters: ...
+tasks:
+  - name: lm_eval_task_name
+    weight: 1.0 # optional
+    metric: "acc,none" # defaults to acc,none
+  - name: ... # as many as you want
+```
+
+---
+
+## Genome Definition
+
+`genome` 섹션은 `mergekit-evolve`가 탐색할 **파라미터 공간(parameter space)**을 정의합니다.
+
+### `models`
+
+병합에 사용할 수 있는 모든 모델의 리스트입니다. 병합 방법에 따라 최종 결과에 모든 모델이 반드시 포함되지는 않을 수 있습니다.
+
+### `merge_method`
+
+사용할 병합 방법입니다. 현재 지원되는 값은 다음과 같습니다:
+
+* `linear`
+* `dare_ties`
+* `task_arithmetic`
+* `ties`
+* `slerp`
+
+### `base_model`
+
+필요한 경우 병합의 기준이 되는 base model을 지정합니다.
+
+### `layer_granularity`
+
+모델 레이어를 일정 크기의 블록으로 나누어, **블록 단위로 서로 다른 병합 파라미터**를 학습하도록 합니다.
+
+예시:
+
+* 32-layer 모델
+* `layer_granularity: 8`
+  → 8개 레이어씩 4개 그룹
+
+이 값은 **모델 레이어 수의 약수(divisor)**여야 합니다.
+
+* 값이 클수록 탐색 공간이 작아져 **수렴 속도는 빨라지지만**, 전역 최적해를 놓칠 가능성이 있습니다.
+* 설정하지 않으면 모든 레이어에 동일한 파라미터를 사용합니다.
+
+### `normalize`
+
+병합 시 `normalize` 플래그를 설정합니다.
+
+* `linear`, `ties`, `dare_ties`와 같은 방법에서
+* 항상 **유효한 모델 공간**만 탐색하도록 제약을 걸어줍니다.
+
+이는 `layer_granularity`와 마찬가지로 수렴 속도를 크게 향상시킬 수 있지만, 비정형이지만 성능이 좋은 해를 배제할 수 있습니다.
+
+### `allow_negative_weights`
+
+말 그대로 **음수 weight 허용 여부**입니다.
+
+* 설정하지 않으면 weight의 절댓값이 사용됩니다.
+* `linear`, `slerp`에서는 탐색 공간 축소에 유리합니다.
+* **task arithmetic 계열**에서는 보통 `true`로 설정하는 것이 좋습니다.
+
+### `smooth`
+
+`true`로 설정하면 레이어 블록 간 파라미터를 **보간(interpolation)**합니다.
+
+* `false`: 각 블록이 고정된 값 사용
+* `true`: 레이어에 따라 부드럽게 변화
+
+### `filters`
+
+`mergekit-yaml`과 동일한 **filter 메커니즘**을 사용하여 파라미터를 분리할 수 있습니다.
+
+예시 (LLaMA 계열 모델):
+
+```yaml
+filters:
+  - self_attn
+  - mlp
+```
+
+이 경우 파라미터 공간이 다음과 같이 나뉩니다:
+
+1. Self-attention 파라미터
+2. MLP 파라미터
+3. 그 외 나머지
+
+프롬프트 포맷이 다른 모델을 병합할 때 매우 유용하지만, **파라미터 차원이 크게 증가**합니다.
+
+---
+
+## Task Definition
+
+병합 결과를 평가하기 위해 EleutherAI **LM Evaluation Harness**에서 지원하는 task 목록을 정의해야 합니다.
+
+* [Built-in tasks](https://github.com/EleutherAI/lm-evaluation-harness/tree/main/lm_eval/tasks)
+* 사용자 정의 task (권장)
+
+  * [New Task Guide](https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/new_task_guide.md)
+
+기본 metric은 `acc`입니다. 다른 metric을 사용하는 경우 반드시 명시해야 합니다.
+
+각 task는 선택적으로 **weight**를 가질 수 있습니다.
+
+⚠️ `mergekit-evolve`는 **점수를 최대화(maximize)**합니다.
+
+* Perplexity처럼 **낮을수록 좋은 지표**는 반드시 **음수 weight**를 사용하세요.
+
+---
+
+## Running `mergekit-evolve`
+
+```sh
+mergekit-evolve [OPTIONS] --storage-path PATH GENOME_CONFIG_PATH
+```
+
+`--storage-path`에는 다음이 저장됩니다:
+
+* 입력 모델
+* 평가 중인 병합 결과
+* 현재 최고 성능 병합의 설정 파일
+
+⚠️ 디스크 기반 병합 시 **GPU당 fp16 모델 1개 이상 용량**이 필요할 수 있습니다.
+
+---
+
+## Scheduling Strategy (`--strategy`)
+
+### `pool` (권장 기본값)
+
+* GPU 하나당 actor 하나 할당
+* 병합과 평가를 동일 노드에서 수행
+* 단일 / 분산 환경 모두 안정적
+
+### `buffered`
+
+* 항상 GPU마다 평가 대기 모델을 유지
+* 병합과 평가를 **동시에 수행 가능**
+* 단일 노드 또는 빠른 공유 파일시스템에서만 사용 권장
+
+### `serial`
+
+* Ray placement group 사용
+* 나머지는 Ray에 전적으로 위임
+* 다른 전략이 잘 안 될 때만 시도
+
+---
+
+## Evaluation LLM Backend
+
+* 기본값: HuggingFace (`hf`)
+* vLLM 사용 시 `--vllm` 플래그 추가
+
+---
+
+## On-Disk vs. In-Memory
+
+기본 동작:
+
+1. 병합 수행
+2. 디스크에 저장
+3. lm-eval 실행
+
+→ 안정적이지만 **느리고 디스크 사용량 큼**
+
+`pool` 전략에서는 **in-memory 병합**이 가능합니다:
+
+* 디스크 저장 없이
+* vLLM 내부 파라미터를 직접 갱신
+* 매우 빠르고 디스크 사용 없음
+* ⚠️ 내부 구현에 의존 → 언제든 깨질 수 있음
+
+활성화:
+
+```sh
+--in-memory
+```
+
+---
+
+## Task Search Path
+
+커스텀 task를 사용하는 경우 검색 경로를 추가할 수 있습니다:
+
+```sh
+--task-search-path /path/to/tasks
+```
+
+여러 번 지정 가능
+
+---
+
+## Batch Size
+
+평가 시 batch size를 오버라이드합니다.
+
+* vLLM 사용 시 `auto` 권장 (기본값)
+
+---
+
+## CMA-ES Options
+
+### `--max-fevals`
+
+* 평가할 병합 수의 최대값
+* 기본값: 100
+* CMA-ES 특성상 **최대 50% 초과**될 수 있음
+
+### `--sigma0`
+
+* CMA-ES 초기 sigma 값
+* 특별한 경우가 아니면 조정할 필요 없음
+
+---
+
+## WandB Logging
+
+Weights & Biases 로깅 지원:
+
+```sh
+--wandb
+--wandb-project <project>
+--wandb-entity <entity>
+```
+
+---
+
+## Example
+
+```sh
+mergekit-evolve \
+  --strategy pool \
+  --wandb \
+  --wandb-project mergekit-evolve \
+  --wandb-entity arcee-ai \
+  --storage-path /path/to/mergekit-evolve/ \
+  ./config.yml
+```
+
+---
+
+## Output
+
+* 현재까지 최고 성능 병합 설정이 다음 파일로 저장됩니다:
+
+```text
+best_config.yaml
+```
+
+* WandB 사용 시 config가 artifact로도 저장됩니다.
+* `Ctrl+C` 또는 `--max-fevals` 초과 시 종료됩니다.
+
+---
+
+## Caveats
+
+`mergekit-evolve`는 아직 **활발히 개발 중**이며, 모든 환경에서 충분히 테스트되지 않았을 수 있습니다.
+
+* 실행 초기에 로그를 꼭 확인하세요
+* 문제가 있으면 GitHub Issue 제출을 권장합니다
+
+---
+
+## Acknowledgements
+
+* SakanaAI: 아이디어 제공
+* EleutherAI: LM Evaluation Harness
+
+
+# mergekit-evolve
+
 `mergekit-evolve` is a script that uses an evolutionary algorithm (CMA-ES) to optimize the parameters of a merge against model metrics. This is inspired by SakanaAI's [Evolutionary Optimization of Model Merging Recipes](https://arxiv.org/abs/2403.13187), in particular their parameter-space approach. `mergekit-evolve` uses EleutherAI's [Language Model Evaluation Harness](https://github.com/EleutherAI/lm-evaluation-harness) to define and evaluate the scoring function. The script is set up to be run either single-node or on a Ray cluster and has a few different strategies for scheduling operations depending on your particular configuration of compute.
 
 ## Installation

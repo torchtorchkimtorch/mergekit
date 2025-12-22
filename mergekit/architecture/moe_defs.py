@@ -15,6 +15,10 @@ from mergekit.architecture.json_definitions import NAME_TO_ARCH
 MISTRAL_INFO = NAME_TO_ARCH["MistralForCausalLM"][0]
 MISTRAL_MODULE_ARCH = MISTRAL_INFO.modules["default"].architecture
 
+# For WBL models - WBL has its own JSON definition
+WBL_INFO = NAME_TO_ARCH["WBLForCausalLM"][0]
+WBL_MODULE_ARCH = WBL_INFO.modules["default"].architecture
+
 
 class MixtralModuleArchitecture(ModuleArchitecture, BaseModel):
     ARCHITECTURE_NAME: ClassVar[str] = "MixtralForCausalLM"
@@ -140,4 +144,73 @@ class AfmoeModuleArchitecture(ModuleArchitecture, BaseModel):
                         optional=True,
                     )
                 )
+        return res
+
+
+class WBLModuleArchitecture(ModuleArchitecture, BaseModel):
+    ARCHITECTURE_NAME: ClassVar[str] = "WBLForCausalLM"
+    n_routed_experts: int
+    n_shared_experts: int
+    first_k_dense_replace: int
+
+    def name(self) -> str:
+        return "wbl"
+
+    @classmethod
+    def from_config(cls, config: PretrainedConfig):
+        return WBLModuleArchitecture(
+            n_routed_experts=config.n_routed_experts,
+            n_shared_experts=config.n_shared_experts,
+            first_k_dense_replace=config.first_k_dense_replace,
+        )
+
+    def pre_weights(self, config: PretrainedConfig) -> List[WeightInfo]:
+        return WBL_MODULE_ARCH.pre_weights(config)
+
+    def post_weights(self, config: PretrainedConfig) -> List[WeightInfo]:
+        return WBL_MODULE_ARCH.post_weights(config)
+
+    def num_layers_config_key(self) -> str:
+        return WBL_MODULE_ARCH.num_layers_config_key()
+
+    def layer_weights(
+        self, index: int, config: PretrainedConfig
+    ) -> Optional[List[WeightInfo]]:
+        prefix = f"model.layers.{index}"
+        tensor_names = []
+
+        # Check if this layer uses MoE or dense MLP
+        if index < self.first_k_dense_replace:
+            # Dense MLP layers
+            for param in ("gate_proj", "up_proj", "down_proj"):
+                tensor_names.append(prefix + f".mlp.{param}.weight")
+        else:
+            # MoE layers
+            # Routed experts
+            for expert_idx in range(self.n_routed_experts):
+                for param in ("gate_proj", "up_proj", "down_proj"):
+                    tensor_names.append(
+                        prefix + f".mlp.experts.{expert_idx}.{param}.weight"
+                    )
+
+            # Shared experts
+            if self.n_shared_experts > 0:
+                for param in ("gate_proj", "up_proj", "down_proj"):
+                    tensor_names.append(
+                        prefix + f".mlp.shared_experts.{param}.weight"
+                    )
+
+            # Gate weight
+            tensor_names.append(prefix + ".mlp.gate.weight")
+
+        res = []
+        for name in tensor_names:
+            res.append(WeightInfo(name=name))
+
+        # Add attention and other weights (layernorms, attention projections)
+        for weight_info in WBL_MODULE_ARCH.layer_weights(index, config):
+            if ".mlp." in weight_info.name:
+                continue
+            res.append(weight_info)
+
         return res

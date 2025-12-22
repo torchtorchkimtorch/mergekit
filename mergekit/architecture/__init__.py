@@ -21,6 +21,7 @@ from mergekit.architecture.moe_defs import (
     AfmoeModuleArchitecture,
     MixtralModuleArchitecture,
     Qwen3MoeModuleArchitecture,
+    WBLModuleArchitecture,
 )
 from mergekit.options import MergeOptions
 
@@ -50,6 +51,13 @@ def arch_info_for_config(config: PretrainedConfig) -> Optional[ModelArchitecture
             modules={"default": ModuleDefinition(architecture=module)},
             architectures=[arch_name],
             model_type="qwen3_moe",
+        )
+    elif arch_name == WBLModuleArchitecture.ARCHITECTURE_NAME:
+        module = WBLModuleArchitecture.from_config(config)
+        return ModelArchitecture(
+            modules={"default": ModuleDefinition(architecture=module)},
+            architectures=[arch_name],
+            model_type="wbl",
         )
     elif arch_name == AfmoeModuleArchitecture.ARCHITECTURE_NAME:
         module = AfmoeModuleArchitecture.from_config(config)

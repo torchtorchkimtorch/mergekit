@@ -1,0 +1,23 @@
+models:
+  - model: /mnt/nlpai-storage/eval_team/final_ckpt/iter_0009200/hf
+    parameters:
+      density: 0.2 # density (delta가 top 몇 % 까지인 parameter를 살릴 것인가) # 논문에서는 경험적으로 0.2를 제안
+      weight: 1.0 # weight (가중 평균할 때 가중치) -> 어떤 값으로 해야하나.. 
+  - model: /mnt/nlpai-storage/eval_team/final_ckpt/iter_0012000/hf
+    parameters:
+      density: 0.2 
+      weight: 1.0 
+  - model: /mnt/nlpai-storage/eval_team/final_ckpt/iter_0014000/hf
+    parameters:
+      density: 0.2 
+      weight: 1.0 
+  - model: /mnt/nlpai-storage/eval_team/final_ckpt/iter_0018000/hf
+    parameters:
+      density: 0.2 
+      weight: 1.0 
+merge_method: ties
+base_model: /mnt/nlpai-storage/eval_team/final_ckpt/base/hf
+parameters:
+  normalize: true
+  int8_mask: true
+dtype: bfloat16
